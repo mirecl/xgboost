@@ -6,7 +6,7 @@ import (
 
 // Ensembler contains interface of a base model.
 type Ensembler interface {
-	Predict(features []float64, baseValue float64) (float64, error)
+	Predict(features []float64) (float64, error)
 }
 
 type xgbEnsemble struct {
@@ -16,7 +16,7 @@ type xgbEnsemble struct {
 }
 
 // Predict returns prediction of this ensemble model.
-func (e *xgbEnsemble) Predict(features []float64, baseValue float64) (float64, error) {
+func (e *xgbEnsemble) Predict(features []float64) (float64, error) {
 	if e.numClasses == 0 {
 		return 0, errors.New("0 class please check your model")
 	}
@@ -25,15 +25,14 @@ func (e *xgbEnsemble) Predict(features []float64, baseValue float64) (float64, e
 	}
 	// number of trees for 1 class.
 	pred := 0.0
-	numTreesPerClass := len(e.Trees) / e.numClasses
-	for i := 0; i < e.numClasses; i++ {
-		for k := 0; k < numTreesPerClass; k++ {
-			p, err := e.Trees[k*e.numClasses+i].predict(features)
-			if err != nil {
-				return 0, err
-			}
-			pred += p
+	numTreesPerClass := len(e.Trees) - 1
+	for k := 0; k < numTreesPerClass; k++ {
+		p, err := e.Trees[k*e.numClasses].predict(features)
+		if err != nil {
+			return 0, err
 		}
+		pred += p
 	}
-	return pred + baseValue, nil
+
+	return pred + 0.5, nil
 }
