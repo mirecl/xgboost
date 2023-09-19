@@ -1,15 +1,12 @@
 package xgboost
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
 	"os"
 	"sort"
-	"strconv"
-	"strings"
 )
 
 type xgboostJSONModel struct {
@@ -24,30 +21,18 @@ type xgboostJSONModel struct {
 }
 
 func loadFeatureMap(featureFile io.Reader) (map[string]int, error) {
-	read := bufio.NewReader(featureFile)
-	featureMap := make(map[string]int, 0)
-	for {
-		// feature map format: feature_index feature_name feature_type
-		line, err := read.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, err
-		}
-		tk := strings.Split(line, " ")
-		if len(tk) != 3 {
-			return nil, fmt.Errorf("wrong feature map format")
-		}
-		featIdx, err := strconv.Atoi(tk[0])
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := featureMap[tk[1]]; ok {
-			return nil, fmt.Errorf("duplicate feature name")
-		}
-		featureMap[tk[1]] = featIdx
+	var featureMap map[string]int
+
+	b, err := io.ReadAll(featureFile)
+	if err != nil {
+		return map[string]int{}, err
 	}
+
+	err = json.Unmarshal(b, &featureMap)
+	if err != nil {
+		return map[string]int{}, err
+	}
+
 	return featureMap, nil
 }
 
@@ -128,7 +113,7 @@ func buildTree(xgbTreeJSON *xgboostJSONModel, maxDepth int, featureMap map[strin
 }
 
 // XGEnsembleFromFile loads xgboost model from json file.
-func XGEnsembleFromFile(modelPath, featuresPath string, numClasses int, maxDepth int) (Ensembler, error) {
+func XGEnsembleFromFile(modelPath, featuresPath string) (Ensembler, error) {
 	modelReader, err := os.Open(modelPath)
 	if err != nil {
 		return nil, err
@@ -141,15 +126,12 @@ func XGEnsembleFromFile(modelPath, featuresPath string, numClasses int, maxDepth
 	}
 	defer featuresReader.Close()
 
-	return XGEnsembleFromReader(modelReader, featuresReader, numClasses, maxDepth)
+	return XGEnsembleFromReader(modelReader, featuresReader)
 }
 
 // XGEnsembleFromReader loads xgboost model from reader.
-func XGEnsembleFromReader(modelReader, featuresReader io.Reader, numClasses int, maxDepth int) (Ensembler, error) {
-	var (
-		xgbEnsembleJSONModel []*xgboostJSONModel
-		featMap              map[string]int
-	)
+func XGEnsembleFromReader(modelReader, featuresReader io.Reader) (Ensembler, error) {
+	var xgbEnsembleJSONModel []*xgboostJSONModel
 
 	dec := json.NewDecoder(modelReader)
 	err := dec.Decode(&xgbEnsembleJSONModel)
@@ -157,32 +139,22 @@ func XGEnsembleFromReader(modelReader, featuresReader io.Reader, numClasses int,
 		return nil, err
 	}
 
-	featMap, err = loadFeatureMap(featuresReader)
+	featMap, err := loadFeatureMap(featuresReader)
 	if err != nil {
 		return nil, err
 	}
 
-	if maxDepth < 0 {
-		return nil, fmt.Errorf("max depth cannot be smaller than 0: %d", maxDepth)
-	}
-
 	nTrees := len(xgbEnsembleJSONModel)
-	if numClasses <= 0 {
-		return nil, fmt.Errorf("num class cannot be 0 or smaller: %d", numClasses)
-	}
 	if nTrees == 0 {
 		return nil, fmt.Errorf("no trees in file")
-	} else if nTrees%numClasses != 0 {
-		return nil, fmt.Errorf("wrong number of trees %d for number of class %d", nTrees, numClasses)
 	}
 
-	e := &xgbEnsemble{numClasses: numClasses}
+	e := &xgbEnsemble{}
 	e.Trees = make([]*xgbTree, 0, nTrees)
-	// TODO: Need to check if max feature index will be the last feature column.
-	// if it is not the case we should find another way to find the number of features.
 	maxFeat := 0
+
 	for i := 0; i < nTrees; i++ {
-		tree, numFeat, err := buildTree(xgbEnsembleJSONModel[i], maxDepth, featMap)
+		tree, numFeat, err := buildTree(xgbEnsembleJSONModel[i], 4, featMap)
 		if err != nil {
 			return nil, fmt.Errorf("error while reading %d tree: %s", i, err.Error())
 		}
